@@ -116,7 +116,7 @@ function StatusPill({ s }: { s: string }) {
     reconnecting: ["Reconnecting", "text-amber border-amber/40 bg-amber/10"],
     error: ["Error", "text-crimson border-crimson/40 bg-crimson/10"],
   };
-  const [l, c] = map[s] ?? map.error!;
+  const [l, c] = map[s] ?? map['error']!;
   return <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-mono ${c}`}><span className="h-2 w-2 rounded-full bg-current animate-pulse" />Deriv · {l}</span>;
 }
 
