@@ -18,3 +18,15 @@ describe("deriv engine rules", () => {
     expect(evaluateDigit("DIGITOVER", 5, 5)).toBe(false);
   });
 });
+
+import { clampDigitBarrier } from "@/lib/deriv-engine";
+import { hlBarrier, settleOrder } from "@/lib/scanner";
+describe("barriers", () => {
+  it("OVER barrier capped at 8", () => { expect(clampDigitBarrier("DIGITOVER", 9)).toBe(8); });
+  it("UNDER barrier at least 1", () => { expect(clampDigitBarrier("DIGITUNDER", 0)).toBe(1); });
+  it("Higher barrier is a negative non-zero offset", () => {
+    const b = hlBarrier([100, 100, 100, 100], 2, "CALL", 5);
+    expect(b).toBe("-0.01");
+  });
+  it("Higher wins only above entry+barrier", () => { expect(settleOrder("CALL", 100, 99.95, 5, "-0.1")).toBe(true); });
+});
