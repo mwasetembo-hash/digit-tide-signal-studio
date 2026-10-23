@@ -77,8 +77,25 @@ function Index() {
           </div>
         </div>
         <div className="border-t border-border/60 bg-panel-2">
+          <div className="mx-auto max-w-[1600px] px-4 pt-2 flex flex-wrap items-center gap-2 font-mono text-xs">
+            <span className="text-muted-foreground uppercase tracking-widest text-[10px]">Deriv Account</span>
+            {e.account ? (
+              <>
+                <span className="text-foreground">{e.account.loginid}</span>
+                <span className={e.account.virtual ? "text-amber" : "text-emerald"}>{e.account.virtual ? "DEMO" : "REAL"}</span>
+                <span className="text-cyan font-bold">{e.account.currency} {e.account.balance.toFixed(2)}</span>
+                {e.accounts.length > 1 && (
+                  <select value={e.accountId || e.account.loginid} onChange={(ev) => e.setAccountId(ev.target.value)} className="bg-panel border border-border rounded px-1 py-0.5">
+                    {e.accounts.map((a) => <option key={a.account_id} value={a.account_id}>{a.account_id} · {a.account_type} · {a.currency} {Number(a.balance).toFixed(2)}</option>)}
+                  </select>
+                )}
+              </>
+            ) : (
+              <span className="text-muted-foreground">{e.tradeStatus === "connecting" ? "Connecting…" : e.tradeStatus === "error" ? "Login failed — check API CONFIG" : "Not connected — add your token in API CONFIG"}</span>
+            )}
+          </div>
           <div className="mx-auto max-w-[1600px] px-4 py-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 font-mono text-xs">
-            <Tel k={e.mode === "demo" || !e.account ? "Virtual Balance" : `Balance · ${e.account.loginid}`} v={`$${balance.toFixed(2)}`} c="text-cyan" />
+            <Tel k={e.mode === "demo" || !e.account ? "Paper Balance" : `Balance · ${e.account.loginid}`} v={`$${balance.toFixed(2)}`} c="text-cyan" />
             <Tel k="Session P&L" v={`${e.stats.pnl >= 0 ? "+" : ""}${e.stats.pnl.toFixed(2)}`} c={e.stats.pnl >= 0 ? "text-emerald" : "text-crimson"} />
             <Tel k="Win Rate" v={`${winRate.toFixed(1)}% (${e.stats.wins}/${total})`} c="text-amber" />
             <Tel k="Current Stake" v={`$${e.currentStake.toFixed(2)}`} c="text-foreground" />
