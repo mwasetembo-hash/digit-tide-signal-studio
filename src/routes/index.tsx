@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  INSTRUMENTS, useDerivEngine, detectSignal, payoutRatio,
+  INSTRUMENTS, useDerivEngine, detectSignal, payoutRatio, clampDigitBarrier, DEFAULT_APP_ID,
   type MarketCat, type Mode, type Settings, type LogLevel,
 } from "@/lib/deriv-engine";
+import { FAMILY_LABEL } from "@/lib/scanner";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -27,10 +28,10 @@ const CT_LABEL: Record<string, string> = { DIGITEVEN: "EVEN", DIGITODD: "ODD", D
 const LS = "mwase-config";
 
 function Index() {
-  const [cfg, setCfg] = useState({ appId: "1089", tokens: [] as string[], active: 0 });
+  const [cfg, setCfg] = useState({ appId: DEFAULT_APP_ID, tokens: [] as string[], active: 0 });
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    try { const s = localStorage.getItem(LS); if (s) setCfg(JSON.parse(s)); } catch { /* ignore */ }
+    try { const s = localStorage.getItem(LS); if (s) { const c = JSON.parse(s); if (!c.appId || c.appId === "1089") c.appId = DEFAULT_APP_ID; setCfg(c); } } catch { /* ignore */ }
     setLoaded(true);
   }, []);
   const saveCfg = (c: typeof cfg) => { setCfg(c); localStorage.setItem(LS, JSON.stringify(c)); };
@@ -40,7 +41,7 @@ function Index() {
   const [showCfg, setShowCfg] = useState(false);
   const [showExec, setShowExec] = useState(false);
   const token = loaded ? cfg.tokens[cfg.active] ?? "" : "";
-  const e = useDerivEngine(loaded ? cfg.appId : "1089", token, target);
+  const e = useDerivEngine(loaded ? cfg.appId : DEFAULT_APP_ID, token, target);
 
   const balance = e.mode === "demo" || !e.account ? e.demoBalance : e.account.balance;
   const total = e.stats.wins + e.stats.losses;
@@ -76,8 +77,25 @@ function Index() {
           </div>
         </div>
         <div className="border-t border-border/60 bg-panel-2">
+          <div className="mx-auto max-w-[1600px] px-4 pt-2 flex flex-wrap items-center gap-2 font-mono text-xs">
+            <span className="text-muted-foreground uppercase tracking-widest text-[10px]">Deriv Account</span>
+            {e.account ? (
+              <>
+                <span className="text-foreground">{e.account.loginid}</span>
+                <span className={e.account.virtual ? "text-amber" : "text-emerald"}>{e.account.virtual ? "DEMO" : "REAL"}</span>
+                <span className="text-cyan font-bold">{e.account.currency} {e.account.balance.toFixed(2)}</span>
+                {e.accounts.length > 1 && (
+                  <select value={e.accountId || e.account.loginid} onChange={(ev) => e.setAccountId(ev.target.value)} className="bg-panel border border-border rounded px-1 py-0.5">
+                    {e.accounts.map((a) => <option key={a.account_id} value={a.account_id}>{a.account_id} · {a.account_type} · {a.currency} {Number(a.balance).toFixed(2)}</option>)}
+                  </select>
+                )}
+              </>
+            ) : (
+              <span className="text-muted-foreground">{e.tradeStatus === "connecting" ? "Connecting…" : e.tradeStatus === "error" ? "Login failed — check API CONFIG" : "Not connected — add your token in API CONFIG"}</span>
+            )}
+          </div>
           <div className="mx-auto max-w-[1600px] px-4 py-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 font-mono text-xs">
-            <Tel k={e.mode === "demo" || !e.account ? "Virtual Balance" : `Balance · ${e.account.loginid}`} v={`$${balance.toFixed(2)}`} c="text-cyan" />
+            <Tel k={e.mode === "demo" || !e.account ? "Paper Balance" : `Balance · ${e.account.loginid}`} v={`$${balance.toFixed(2)}`} c="text-cyan" />
             <Tel k="Session P&L" v={`${e.stats.pnl >= 0 ? "+" : ""}${e.stats.pnl.toFixed(2)}`} c={e.stats.pnl >= 0 ? "text-emerald" : "text-crimson"} />
             <Tel k="Win Rate" v={`${winRate.toFixed(1)}% (${e.stats.wins}/${total})`} c="text-amber" />
             <Tel k="Current Stake" v={`$${e.currentStake.toFixed(2)}`} c="text-foreground" />
@@ -90,7 +108,7 @@ function Index() {
       <main className="mx-auto max-w-[1600px] px-4 mt-4 grid gap-4 lg:grid-cols-12">
         <section className="lg:col-span-8 space-y-4">
           <DigitPanel digits={e.digits} target={target} setTarget={setTarget} quote={e.quotes[target]} />
-          <SignalsGrid quotes={e.quotes} filter={filter} onPick={setTarget} target={target} />
+          <SignalsGrid e={e} filter={filter} onPick={setTarget} target={target} />
           <LogTerminal logs={e.logs} clear={e.clearLogs} />
         </section>
         <aside className="lg:col-span-4 space-y-4">
@@ -184,28 +202,38 @@ function DigitPanel({ digits, target, setTarget, quote }: { digits: number[]; ta
   );
 }
 
-function SignalsGrid({ quotes, filter, onPick, target }: { quotes: Record<string, any>; filter: string; onPick: (s: string) => void; target: string }) {
-  const list = INSTRUMENTS.filter((i) => filter === "all" || i.cat === filter);
+function SignalsGrid({ e, filter, onPick, target }: { e: ReturnType<typeof useDerivEngine>; filter: string; onPick: (s: string) => void; target: string }) {
+  const cats = new Map(INSTRUMENTS.map((i) => [i.symbol, i]));
+  const list = e.signals.filter((o) => filter === "all" || cats.get(o.symbol)?.cat === filter).slice(0, 30);
   return (
     <div className="glass p-4">
-      <h2 className="font-semibold mb-3">Active Market Signals</h2>
+      <div className="flex justify-between items-center mb-3">
+        <h2 className="font-semibold">AI Swarm Signals · all instruments & contract types</h2>
+        <span className="text-[10px] font-mono text-muted-foreground">{e.signals.length} live signals</span>
+      </div>
+      {list.length === 0 && <p className="text-xs text-muted-foreground font-mono">Agents collecting ticks…</p>}
       <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
-        {list.map((i) => {
-          const q = quotes[i.symbol];
-          const up = q ? q.price >= q.prev : true;
-          const conf = q ? 85 + (Math.floor(q.price * 1000) % 14) : 85;
-          const strat = i.cat === "synthetic" ? ["Digit Mean Reversion", "Over/Under Scan", "Differs Cold Digit"][Math.floor((q?.time ?? 0) / 7) % 3] : "Momentum Rise/Fall";
+        {list.map((o) => {
+          const q = e.quotes[o.symbol];
+          const up = o.type === "CALL" || o.type === "DIGITOVER" || o.type === "DIGITEVEN";
+          const name = cats.get(o.symbol)?.name ?? o.symbol;
           return (
-            <button key={i.symbol} onClick={() => onPick(i.symbol)} className={`text-left rounded-lg border bg-background/40 p-3 hover:border-cyan/60 transition ${target === i.symbol ? "border-cyan/70" : "border-border"}`}>
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">{i.name}</span>
-                <span className={`text-[10px] font-mono font-bold rounded px-2 py-0.5 ${up ? "bg-emerald/15 text-emerald" : "bg-crimson/15 text-crimson"}`}>{up ? "▲ CALL" : "▼ PUT"}</span>
+            <div key={`${o.symbol}-${o.family}`} className={`rounded-lg border bg-background/40 p-3 ${target === o.symbol ? "border-cyan/70" : "border-border"}`}>
+              <button onClick={() => onPick(o.symbol)} className="w-full text-left">
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-sm font-medium truncate">{name}</span>
+                  <span className={`text-[10px] font-mono font-bold rounded px-2 py-0.5 ${up ? "bg-emerald/15 text-emerald" : "bg-crimson/15 text-crimson"}`}>{o.type.replace("DIGIT", "")}{o.barrier ? ` ${o.barrier}` : ""}</span>
+                </div>
+                <div className="font-mono text-lg font-bold mt-1">{q ? q.price.toFixed(q.pip) : "—"}</div>
+                <div className="text-[11px] text-amber">{FAMILY_LABEL[o.family]} · {o.duration}{o.unit === "t" ? " ticks" : " min"}</div>
+                <div className="text-[11px] text-muted-foreground truncate">{o.reason}</div>
+                <div className="mt-2 h-1.5 rounded bg-muted overflow-hidden"><div className="h-full bg-cyan transition-all" style={{ width: `${o.confidence}%` }} /></div>
+              </button>
+              <div className="flex justify-between items-center mt-1">
+                <span className="text-[10px] font-mono text-cyan">CONFIDENCE {o.confidence}%</span>
+                <button onClick={() => e.placeOrder(o)} className="text-[10px] font-mono font-bold rounded bg-cyan/15 text-cyan border border-cyan/40 px-2 py-0.5 hover:bg-cyan/25">EXECUTE</button>
               </div>
-              <div className={`font-mono text-xl font-bold mt-1 ${up ? "text-emerald" : "text-crimson"}`}>{q ? q.price.toFixed(q.pip) : "—"}</div>
-              <div className="text-[11px] text-muted-foreground">{strat}</div>
-              <div className="mt-2 h-1.5 rounded bg-muted overflow-hidden"><div className="h-full bg-cyan transition-all" style={{ width: `${conf}%` }} /></div>
-              <div className="text-[10px] font-mono text-cyan mt-1">CONFIDENCE {conf}%</div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -240,19 +268,20 @@ function StrategyDeck({ e }: { e: ReturnType<typeof useDerivEngine> }) {
   return (
     <div className="glass p-4 space-y-3">
       <h2 className="font-semibold">Strategy Deck</h2>
-      <div className="grid grid-cols-3 gap-1 text-[11px]">
-        {([["meanrev", "Mean Reversion"], ["overunder", "Over / Under"], ["matchdiff", "Match / Differ"]] as const).map(([k, l]) => (
+      <div className="grid grid-cols-2 gap-1 text-[11px]">
+        {([["swarm", "AI Swarm · All Markets"], ["meanrev", "Mean Reversion"], ["overunder", "Over / Under"], ["matchdiff", "Match / Differ"]] as const).map(([k, l]) => (
           <button key={k} onClick={() => up({ strategy: k })} className={`rounded-md border px-2 py-2 ${s.strategy === k ? "border-cyan text-cyan bg-cyan/10" : "border-border text-muted-foreground"}`}>{l}</button>
         ))}
       </div>
+      {s.strategy === "swarm" && <><p className="text-xs text-muted-foreground">One agent per instrument × contract type (Even/Odd, Over/Under, Differs, Rise/Fall, Higher/Lower) scans every second; the bot auto-executes the strongest signal above your confidence floor.</p><Num label="Min confidence %" value={s.minConfidence} onChange={(n) => up({ minConfidence: Math.min(99, Math.max(50, Math.round(n))) })} /></>}
       {s.strategy === "meanrev" && <p className="text-xs text-muted-foreground">Detects 3 consecutive EVEN or ODD digits, then trades the opposite parity.</p>}
-      {s.strategy !== "meanrev" && (
+      {(s.strategy === "overunder" || s.strategy === "matchdiff") && (
         <div className="grid grid-cols-2 gap-2">
           <label className="block"><span className="text-[10px] uppercase tracking-wider text-muted-foreground">Direction</span>
             <select value={s.strategy === "overunder" ? s.ouDirection : s.mdDirection} onChange={(ev) => s.strategy === "overunder" ? up({ ouDirection: ev.target.value as any }) : up({ mdDirection: ev.target.value as any })} className="mt-1 w-full rounded-md bg-background border border-border px-2 py-1.5 font-mono text-sm">
               {s.strategy === "overunder" ? <><option value="DIGITOVER">OVER</option><option value="DIGITUNDER">UNDER</option></> : <><option value="DIGITDIFF">DIFFERS</option><option value="DIGITMATCH">MATCHES</option></>}
             </select></label>
-          <Num label="Barrier (0-9)" value={s.barrier} onChange={(n) => up({ barrier: Math.min(9, Math.max(0, Math.round(n))) })} />
+          <Num label="Barrier (0-9)" value={s.barrier} onChange={(n) => up({ barrier: clampDigitBarrier(s.strategy === "overunder" ? s.ouDirection : s.mdDirection, n) })} />
         </div>
       )}
       <div className="grid grid-cols-2 gap-2">
@@ -291,7 +320,7 @@ function ExecDrawer({ e, target, close }: { e: ReturnType<typeof useDerivEngine>
         <div className="grid grid-cols-3 gap-1">
           {Object.entries(CT_LABEL).map(([k, l]) => <button key={k} onClick={() => setType(k)} className={`rounded-md border py-2 text-xs font-mono ${type === k ? "border-cyan text-cyan bg-cyan/10" : "border-border"}`}>{l}</button>)}
         </div>
-        {needsB && <Num label="Barrier digit" value={barrier} onChange={(n) => setBarrier(Math.min(9, Math.max(0, Math.round(n))))} />}
+        {needsB && <Num label="Barrier digit" value={barrier} onChange={(n) => setBarrier(clampDigitBarrier(type, n))} />}
         <Num label="Stake $" value={stake} step={0.35} onChange={(n) => setStake(Math.max(0.35, n))} />
         <div className="font-mono text-xs space-y-1 rounded-md bg-background/60 p-3 border border-border">
           <div className="flex justify-between"><span className="text-muted-foreground">Symbol</span><span>{target}</span></div>
@@ -299,7 +328,7 @@ function ExecDrawer({ e, target, close }: { e: ReturnType<typeof useDerivEngine>
           <div className="flex justify-between"><span className="text-muted-foreground">Est. profit</span><span className="text-emerald">+${profit.toFixed(2)}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">Execution</span><span className={live ? "text-crimson" : "text-emerald"}>{live ? "LIVE ACCOUNT" : "PAPER"}</span></div>
         </div>
-        <button onClick={() => { e.placeTrade(type, barrier, stake); close(); }} className={`w-full rounded-md py-3 font-mono font-bold ${live ? "bg-crimson text-destructive-foreground glow-crimson" : "bg-cyan text-primary-foreground glow-cyan"}`}>BUY {CT_LABEL[type]}{needsB ? ` ${barrier}` : ""} · ${stake.toFixed(2)}</button>
+        <button onClick={() => { e.placeTrade(type, clampDigitBarrier(type, barrier), stake); close(); }} className={`w-full rounded-md py-3 font-mono font-bold ${live ? "bg-crimson text-destructive-foreground glow-crimson" : "bg-cyan text-primary-foreground glow-cyan"}`}>BUY {CT_LABEL[type]}{needsB ? ` ${barrier}` : ""} · ${stake.toFixed(2)}</button>
       </div>
     </div>
   );
@@ -314,7 +343,7 @@ function ConfigModal({ cfg, save, close, account }: { cfg: { appId: string; toke
     <div className="fixed inset-0 z-50 grid place-items-center bg-background/70 backdrop-blur-sm p-4" onClick={close}>
       <div className="glass bg-card w-full max-w-lg p-5 space-y-4" onClick={(ev) => ev.stopPropagation()}>
         <div className="flex justify-between"><h2 className="font-mono font-bold text-cyan">DERIV API CONFIG</h2><button onClick={close}>✕</button></div>
-        <label className="block"><span className="text-[10px] uppercase tracking-wider text-muted-foreground">App ID (numeric, default 1089)</span>
+        <label className="block"><span className="text-[10px] uppercase tracking-wider text-muted-foreground">App ID (new Deriv API ID or legacy numeric)</span>
           <input value={appId} onChange={(ev) => setAppId(ev.target.value)} className="mt-1 w-full rounded-md bg-background border border-border px-2 py-2 font-mono text-sm" /></label>
         <div>
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">API tokens (pick active)</span>
@@ -331,10 +360,10 @@ function ConfigModal({ cfg, save, close, account }: { cfg: { appId: string; toke
             <input type="password" placeholder="Paste Deriv API token" value={draft} onChange={(ev) => setDraft(ev.target.value)} className="flex-1 rounded-md bg-background border border-border px-2 py-2 font-mono text-sm" />
             <button onClick={() => { if (draft.trim()) { setTokens([...tokens, draft.trim()]); setActive(tokens.length); setDraft(""); } }} className="rounded-md border border-cyan text-cyan px-3 text-xs font-mono">ADD</button>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-2">Tokens are stored only in this browser. Use a token with Read + Trade scope.</p>
+          <p className="text-[11px] text-muted-foreground mt-2">Tokens are stored only in this browser. Use a Personal Access Token (pat_…) with Trade scope from developers.deriv.com. Demo account is used first.</p>
         </div>
         {account && <p className="text-xs font-mono text-emerald">Authorized: {account.loginid} ({account.virtual ? "virtual" : "real"})</p>}
-        <button onClick={() => { save({ appId: appId.trim() || "1089", tokens, active }); close(); }} className="w-full rounded-md bg-cyan py-2.5 font-mono font-bold text-primary-foreground">SAVE & RECONNECT</button>
+        <button onClick={() => { save({ appId: appId.trim() || DEFAULT_APP_ID, tokens, active }); close(); }} className="w-full rounded-md bg-cyan py-2.5 font-mono font-bold text-primary-foreground">SAVE & RECONNECT</button>
       </div>
     </div>
   );
