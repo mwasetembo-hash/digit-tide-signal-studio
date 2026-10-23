@@ -211,9 +211,9 @@ export function useDerivEngine(appId: string, token: string, target: string) {
     log("trade", `Proposal ${desc} $${stake.toFixed(2)}`);
     pending.current = base;
     const req: Record<string, unknown> = { proposal: 1, amount: stake, basis: "stake", contract_type: order.type, currency: account!.currency || "USD", duration: order.duration, duration_unit: order.unit, underlying_symbol: order.symbol };
-    if (order.barrier !== undefined) req.barrier = order.barrier;
+    if (order.barrier !== undefined) req["barrier"] = order.barrier;
     const legacy = !(tradeWs.current?.readyState === WebSocket.OPEN);
-    if (legacy) { req.symbol = order.symbol; delete req.underlying_symbol; }
+    if (legacy) { req["symbol"] = order.symbol; delete req["underlying_symbol"]; }
     tradeSend(req, (m) => {
       if (m.error) { log("error", `Proposal error: ${m.error.message}`); pending.current = null; setBotState("IDLE"); return; }
       const pr = m.proposal;
