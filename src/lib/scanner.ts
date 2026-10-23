@@ -10,7 +10,7 @@ export type Order = {
   symbol: string;
   family: Family;
   type: string;           // Deriv contract_type
-  barrier?: string;       // digit "0-9" or price offset "+0.12" / "-0.12"
+  barrier?: string | undefined; // digit "0-9" or price offset "+0.12" / "-0.12"
   duration: number;
   unit: "t" | "m";
   confidence: number;     // 0-99

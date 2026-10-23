@@ -211,9 +211,9 @@ export function useDerivEngine(appId: string, token: string, target: string) {
     log("trade", `Proposal ${desc} $${stake.toFixed(2)}`);
     pending.current = base;
     const req: Record<string, unknown> = { proposal: 1, amount: stake, basis: "stake", contract_type: order.type, currency: account!.currency || "USD", duration: order.duration, duration_unit: order.unit, underlying_symbol: order.symbol };
-    if (order.barrier !== undefined) req.barrier = order.barrier;
+    if (order.barrier !== undefined) req["barrier"] = order.barrier;
     const legacy = !(tradeWs.current?.readyState === WebSocket.OPEN);
-    if (legacy) { req.symbol = order.symbol; delete req.underlying_symbol; }
+    if (legacy) { req["symbol"] = order.symbol; delete req["underlying_symbol"]; }
     tradeSend(req, (m) => {
       if (m.error) { log("error", `Proposal error: ${m.error.message}`); pending.current = null; setBotState("IDLE"); return; }
       const pr = m.proposal;
@@ -247,7 +247,8 @@ export function useDerivEngine(appId: string, token: string, target: string) {
     const legacyId = /^\d+$/.test(appId) ? appId : "1089";
     const connect = () => {
       setStatus(attempts ? "reconnecting" : "connecting");
-      const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${legacyId}`);
+      const legacyAuth = !!token && !token.startsWith("pat_") && /^\d+$/.test(appId);
+      const ws = new WebSocket(legacyAuth ? `wss://ws.derivws.com/websockets/v3?app_id=${legacyId}` : "wss://api.derivws.com/trading/v1/options/ws/public");
       wsRef.current = ws;
       ws.onopen = () => {
         attempts = 0;
@@ -265,7 +266,7 @@ export function useDerivEngine(appId: string, token: string, target: string) {
           });
           ws.send(JSON.stringify({ ticks: i.symbol, subscribe: 1 }));
         });
-        if (token && !token.startsWith("pat_") && /^\d+$/.test(appId)) ws.send(JSON.stringify({ authorize: token }));
+        if (legacyAuth) ws.send(JSON.stringify({ authorize: token }));
       };
       ws.onmessage = (ev) => {
         const m = JSON.parse(ev.data);
