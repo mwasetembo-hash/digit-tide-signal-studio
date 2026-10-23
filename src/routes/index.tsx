@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  INSTRUMENTS, useDerivEngine, detectSignal, payoutRatio,
+  INSTRUMENTS, useDerivEngine, detectSignal, payoutRatio, clampDigitBarrier, DEFAULT_APP_ID,
   type MarketCat, type Mode, type Settings, type LogLevel,
 } from "@/lib/deriv-engine";
+import { FAMILY_LABEL } from "@/lib/scanner";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -27,10 +28,10 @@ const CT_LABEL: Record<string, string> = { DIGITEVEN: "EVEN", DIGITODD: "ODD", D
 const LS = "mwase-config";
 
 function Index() {
-  const [cfg, setCfg] = useState({ appId: "1089", tokens: [] as string[], active: 0 });
+  const [cfg, setCfg] = useState({ appId: DEFAULT_APP_ID, tokens: [] as string[], active: 0 });
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    try { const s = localStorage.getItem(LS); if (s) setCfg(JSON.parse(s)); } catch { /* ignore */ }
+    try { const s = localStorage.getItem(LS); if (s) { const c = JSON.parse(s); if (!c.appId || c.appId === "1089") c.appId = DEFAULT_APP_ID; setCfg(c); } } catch { /* ignore */ }
     setLoaded(true);
   }, []);
   const saveCfg = (c: typeof cfg) => { setCfg(c); localStorage.setItem(LS, JSON.stringify(c)); };
@@ -40,7 +41,7 @@ function Index() {
   const [showCfg, setShowCfg] = useState(false);
   const [showExec, setShowExec] = useState(false);
   const token = loaded ? cfg.tokens[cfg.active] ?? "" : "";
-  const e = useDerivEngine(loaded ? cfg.appId : "1089", token, target);
+  const e = useDerivEngine(loaded ? cfg.appId : DEFAULT_APP_ID, token, target);
 
   const balance = e.mode === "demo" || !e.account ? e.demoBalance : e.account.balance;
   const total = e.stats.wins + e.stats.losses;
@@ -90,7 +91,7 @@ function Index() {
       <main className="mx-auto max-w-[1600px] px-4 mt-4 grid gap-4 lg:grid-cols-12">
         <section className="lg:col-span-8 space-y-4">
           <DigitPanel digits={e.digits} target={target} setTarget={setTarget} quote={e.quotes[target]} />
-          <SignalsGrid quotes={e.quotes} filter={filter} onPick={setTarget} target={target} />
+          <SignalsGrid e={e} filter={filter} onPick={setTarget} target={target} />
           <LogTerminal logs={e.logs} clear={e.clearLogs} />
         </section>
         <aside className="lg:col-span-4 space-y-4">
@@ -184,28 +185,38 @@ function DigitPanel({ digits, target, setTarget, quote }: { digits: number[]; ta
   );
 }
 
-function SignalsGrid({ quotes, filter, onPick, target }: { quotes: Record<string, any>; filter: string; onPick: (s: string) => void; target: string }) {
-  const list = INSTRUMENTS.filter((i) => filter === "all" || i.cat === filter);
+function SignalsGrid({ e, filter, onPick, target }: { e: ReturnType<typeof useDerivEngine>; filter: string; onPick: (s: string) => void; target: string }) {
+  const cats = new Map(INSTRUMENTS.map((i) => [i.symbol, i]));
+  const list = e.signals.filter((o) => filter === "all" || cats.get(o.symbol)?.cat === filter).slice(0, 30);
   return (
     <div className="glass p-4">
-      <h2 className="font-semibold mb-3">Active Market Signals</h2>
+      <div className="flex justify-between items-center mb-3">
+        <h2 className="font-semibold">AI Swarm Signals · all instruments & contract types</h2>
+        <span className="text-[10px] font-mono text-muted-foreground">{e.signals.length} live signals</span>
+      </div>
+      {list.length === 0 && <p className="text-xs text-muted-foreground font-mono">Agents collecting ticks…</p>}
       <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
-        {list.map((i) => {
-          const q = quotes[i.symbol];
-          const up = q ? q.price >= q.prev : true;
-          const conf = q ? 85 + (Math.floor(q.price * 1000) % 14) : 85;
-          const strat = i.cat === "synthetic" ? ["Digit Mean Reversion", "Over/Under Scan", "Differs Cold Digit"][Math.floor((q?.time ?? 0) / 7) % 3] : "Momentum Rise/Fall";
+        {list.map((o) => {
+          const q = e.quotes[o.symbol];
+          const up = o.type === "CALL" || o.type === "DIGITOVER" || o.type === "DIGITEVEN";
+          const name = cats.get(o.symbol)?.name ?? o.symbol;
           return (
-            <button key={i.symbol} onClick={() => onPick(i.symbol)} className={`text-left rounded-lg border bg-background/40 p-3 hover:border-cyan/60 transition ${target === i.symbol ? "border-cyan/70" : "border-border"}`}>
-              <div className="flex justify-between items-center">
-                <span className="text-sm font-medium">{i.name}</span>
-                <span className={`text-[10px] font-mono font-bold rounded px-2 py-0.5 ${up ? "bg-emerald/15 text-emerald" : "bg-crimson/15 text-crimson"}`}>{up ? "▲ CALL" : "▼ PUT"}</span>
+            <div key={`${o.symbol}-${o.family}`} className={`rounded-lg border bg-background/40 p-3 ${target === o.symbol ? "border-cyan/70" : "border-border"}`}>
+              <button onClick={() => onPick(o.symbol)} className="w-full text-left">
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-sm font-medium truncate">{name}</span>
+                  <span className={`text-[10px] font-mono font-bold rounded px-2 py-0.5 ${up ? "bg-emerald/15 text-emerald" : "bg-crimson/15 text-crimson"}`}>{o.type.replace("DIGIT", "")}{o.barrier ? ` ${o.barrier}` : ""}</span>
+                </div>
+                <div className="font-mono text-lg font-bold mt-1">{q ? q.price.toFixed(q.pip) : "—"}</div>
+                <div className="text-[11px] text-amber">{FAMILY_LABEL[o.family]} · {o.duration}{o.unit === "t" ? " ticks" : " min"}</div>
+                <div className="text-[11px] text-muted-foreground truncate">{o.reason}</div>
+                <div className="mt-2 h-1.5 rounded bg-muted overflow-hidden"><div className="h-full bg-cyan transition-all" style={{ width: `${o.confidence}%` }} /></div>
+              </button>
+              <div className="flex justify-between items-center mt-1">
+                <span className="text-[10px] font-mono text-cyan">CONFIDENCE {o.confidence}%</span>
+                <button onClick={() => e.placeOrder(o)} className="text-[10px] font-mono font-bold rounded bg-cyan/15 text-cyan border border-cyan/40 px-2 py-0.5 hover:bg-cyan/25">EXECUTE</button>
               </div>
-              <div className={`font-mono text-xl font-bold mt-1 ${up ? "text-emerald" : "text-crimson"}`}>{q ? q.price.toFixed(q.pip) : "—"}</div>
-              <div className="text-[11px] text-muted-foreground">{strat}</div>
-              <div className="mt-2 h-1.5 rounded bg-muted overflow-hidden"><div className="h-full bg-cyan transition-all" style={{ width: `${conf}%` }} /></div>
-              <div className="text-[10px] font-mono text-cyan mt-1">CONFIDENCE {conf}%</div>
-            </button>
+            </div>
           );
         })}
       </div>
